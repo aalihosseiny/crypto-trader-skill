@@ -1,0 +1,20 @@
+{
+  "exchange": "nobitex",
+  "quote": "IRT",
+  "mode": "paper",
+  "cash_buffer_pct": 10,
+  "max_position_pct": 25,
+  "min_order": {"IRT": 300000, "USDT": 11},
+  "max_order": {"IRT": 100000000, "USDT": 2000},
+  "max_orders_per_day": 20,
+  "blocked": [],
+  "allowed": null,
+  "max_spread_pct": 1.5,
+  "max_price_age_min": 15,
+  "max_limit_deviation_pct": 3,
+  "slippage_pct": 0.5,
+  "fee_pct": 0.25,
+  "allow_leverage": false,
+  "approval_ttl_min": 10,
+  "qty_decimals": {}
+}

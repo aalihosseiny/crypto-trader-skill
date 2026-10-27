@@ -1,0 +1,10 @@
+{
+  "source": "hand-written example",
+  "quote": "IRT",
+  "targets": [
+    {"coin": "BTC", "weight": 0.50},
+    {"coin": "ETH", "weight": 0.25},
+    {"coin": "SOL", "weight": 0.15},
+    {"coin": "TON", "weight": 0.10}
+  ]
+}

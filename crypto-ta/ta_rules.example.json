@@ -1,0 +1,6 @@
+{
+  "above_ema200": true,
+  "rsi_max": 65,
+  "macd_positive": true,
+  "max_atr_pct": 8
+}

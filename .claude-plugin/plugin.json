@@ -1,0 +1,8 @@
+{
+  "name": "crypto-trader-skill",
+  "description": "9 Claude skills for crypto on Nobitex and Wallex: copy whale wallets, watch news and market mood, technical analysis, price alerts, size every buy to your budget, risk checks, and orders that never go out without your yes.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "keywords": ["claude-skills", "crypto", "nobitex", "wallex", "whales", "technical-analysis", "portfolio"],
+  "skills": "./"
+}

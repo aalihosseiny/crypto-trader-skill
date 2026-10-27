@@ -1,0 +1,5 @@
+# your own trading data never goes to GitHub
+crypto/
+__pycache__/
+*.pyc
+.env
