@@ -255,5 +255,40 @@ class TestLive(Base):
             os.environ.pop("NOBITEX_TOKEN", None)
 
 
+class TestSigned(Case):
+    SEED = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+
+    def test_ed25519_matches_rfc8032_vectors(self):
+        self.assertEqual(K.ed25519_sign(self.SEED, b"").hex(),
+                         "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
+        seed3 = bytes.fromhex("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")
+        self.assertEqual(K.ed25519_sign(seed3, bytes.fromhex("72")).hex(),
+                         "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00")
+
+    def test_signed_headers_cover_path_query_and_body(self):
+        import base64
+        secret = base64.urlsafe_b64encode(self.SEED).decode()
+        h = K.nobitex_signed_headers("pub", secret, "post", "https://apiv2.nobitex.ir/market/orders/add?a=1", b'{"x":1}')
+        self.assertEqual(set(h), {"Nobitex-Key", "Nobitex-Signature", "Nobitex-Timestamp"})
+        self.assertEqual(h["Nobitex-Key"], "pub")
+        payload = (h["Nobitex-Timestamp"] + "POST/market/orders/add?a=1").encode() + b'{"x":1}'
+        self.assertEqual(base64.urlsafe_b64decode(h["Nobitex-Signature"]), K.ed25519_sign(self.SEED, payload))
+
+    def test_key_pair_wins_over_token_in_live(self):
+        import base64
+        secret = base64.urlsafe_b64encode(self.SEED).decode()
+        old = {v: os.environ.get(v) for v in ("NOBITEX_TOKEN", "NOBITEX_API_KEY", "NOBITEX_API_SECRET")}
+        os.environ.update(NOBITEX_TOKEN="t", NOBITEX_API_KEY="pub", NOBITEX_API_SECRET=secret)
+        try:
+            var, headers = K.credentials("nobitex", "live")
+            self.assertEqual(var, "NOBITEX_API_KEY")
+            self.assertEqual(headers, {"_nobitex_signed": ("pub", secret)})
+            var, headers = K.credentials("nobitex", "testnet")
+            self.assertEqual(headers, None)
+        finally:
+            for v, x in old.items():
+                os.environ.pop(v, None) if x is None else os.environ.__setitem__(v, x)
+
+
 if __name__ == "__main__":
     unittest.main()

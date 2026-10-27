@@ -54,6 +54,12 @@ never places an order the user did not answer about after seeing its ticket.
      and IP-restricted if the exchange offers it.
   2. They set it in their own terminal, not in the chat:
      `export NOBITEX_TOKEN=...` or `export WALLEX_API_KEY=...`.
+     A Nobitex panel API key is a signed key pair, not a token: set
+     `NOBITEX_API_KEY` (the public `key`) and `NOBITEX_API_SECRET` (the
+     `privateKey`, shown once). Requests are then signed with Ed25519
+     (`Nobitex-Key`, `Nobitex-Signature`, `Nobitex-Timestamp`). If both are set
+     they win over `NOBITEX_TOKEN`, which is only a login token and is sent as
+     `Authorization: Token ...`. Give the key `READ,TRADE` only, never `WITHDRAW`.
   3. They change `"mode": "live"` in `crypto/config.json` themselves, or tell
      Claude to, after Claude has repeated: "real orders with real money".
   If a user pastes a key into the chat, tell them to revoke it and make a new
