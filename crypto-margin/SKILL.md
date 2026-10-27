@@ -68,7 +68,8 @@ at 2x a 45% move against a long liquidates it, at 5x about 12%.
   unless the user asks for that specific change; repeat the new value back.
 - Never open a position to "win back" a loss unless the user asks for that
   exact trade.
-- Keys only from `NOBITEX_TOKEN` in the user's own terminal. Margin needs the
+- Keys only from `NOBITEX_API_KEY` + `NOBITEX_API_SECRET` (signed API key, Ed25519)
+  or `NOBITEX_TOKEN` (login token), set in the user's own terminal. Margin needs the
   same Iranian IP as all Nobitex calls.
 - The liquidation price before opening is an estimate (Nobitex liquidates at
   margin ratio 1.1); after opening, the exchange's own number is shown.

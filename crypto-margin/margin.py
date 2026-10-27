@@ -36,7 +36,7 @@ After opening, the exchange's own liquidationPrice is shown and used.
 Positions expire after 30 days and pay a daily extension fee.
 
 Modes follow crypto/config.json: paper (simulated, default), live
-($NOBITEX_TOKEN). Nobitex has no margin on its testnet docs, so testnet is not
+($NOBITEX_API_KEY + $NOBITEX_API_SECRET, or $NOBITEX_TOKEN). Nobitex has no margin on its testnet docs, so testnet is not
 offered here. Units: toman in, rial (x10) in every Nobitex payload.
 """
 import argparse
@@ -169,11 +169,90 @@ def okey(o):
     return "%s:%s" % (o["id"], order_hash(o))
 
 
+_P = 2 ** 255 - 19
+_Q = 2 ** 252 + 27742317777372353535851937790883648493
+_D = -121665 * pow(121666, _P - 2, _P) % _P
+
+
+def _ed_add(a, b):
+    (x1, y1, z1, t1), (x2, y2, z2, t2) = a, b
+    A = (y1 - x1) * (y2 - x2) % _P
+    B = (y1 + x1) * (y2 + x2) % _P
+    C = t1 * 2 * _D * t2 % _P
+    D = z1 * 2 * z2 % _P
+    E, F, G, H = B - A, D - C, D + C, B + A
+    return (E * F % _P, G * H % _P, F * G % _P, E * H % _P)
+
+
+def _ed_mul(s, pt):
+    r = (0, 1, 1, 0)
+    while s:
+        if s & 1:
+            r = _ed_add(r, pt)
+        pt = _ed_add(pt, pt)
+        s >>= 1
+    return r
+
+
+def _ed_enc(pt):
+    x, y, z, _ = pt
+    zi = pow(z, _P - 2, _P)
+    x, y = x * zi % _P, y * zi % _P
+    return (y | ((x & 1) << 255)).to_bytes(32, "little")
+
+
+def _ed_base():
+    y = 4 * pow(5, _P - 2, _P) % _P
+    x2 = (y * y - 1) * pow(_D * y * y + 1, _P - 2, _P) % _P
+    x = pow(x2, (_P + 3) // 8, _P)
+    if (x * x - x2) % _P:
+        x = x * pow(2, (_P - 1) // 4, _P) % _P
+    if x & 1:
+        x = _P - x
+    return (x, y, 1, x * y % _P)
+
+
+def ed25519_sign(seed, msg):
+    """Ed25519 signature (RFC 8032) of msg with a 32-byte seed; pure Python, no dependencies."""
+    import hashlib
+    h = hashlib.sha512(seed).digest()
+    a = int.from_bytes(h[:32], "little") & ((1 << 254) - 8) | (1 << 254)
+    B = _ed_base()
+    A = _ed_enc(_ed_mul(a, B))
+    r = int.from_bytes(hashlib.sha512(h[32:] + msg).digest(), "little") % _Q
+    R = _ed_enc(_ed_mul(r, B))
+    k = int.from_bytes(hashlib.sha512(R + A + msg).digest(), "little") % _Q
+    return R + ((r + k * a) % _Q).to_bytes(32, "little")
+
+
+def nobitex_signed_headers(key, secret, method, url, raw_body):
+    """Nobitex API-key auth: sign timestamp + METHOD + full_path + raw_body with Ed25519 (URL-safe Base64)."""
+    import base64
+    import time
+    import urllib.parse
+    u = urllib.parse.urlsplit(url)
+    path = u.path + ("?" + u.query if u.query else "")
+    ts = str(int(time.time()))
+    payload = (ts + method.upper() + path).encode() + raw_body
+    seed = base64.urlsafe_b64decode(secret)
+    sig = base64.urlsafe_b64encode(ed25519_sign(seed, payload)).decode()
+    return {"Nobitex-Key": key, "Nobitex-Signature": sig, "Nobitex-Timestamp": ts}
+
+
 def http(method, url, headers=None, body=None, timeout=30):
     """One HTTP call, never retried (a retried POST could open a second position). Tests replace this."""
     h = {"User-Agent": UA, "Accept": "application/json", "Content-Type": "application/json"}
-    h.update(headers or {})
-    data = json.dumps(body).encode() if body is not None else None
+    headers = dict(headers or {})
+    signed = headers.pop("_nobitex_signed", None)
+    h.update(headers)
+    if body is None:
+        data = None
+    elif signed:
+        data = json.dumps(body, separators=(",", ":")).encode()
+    else:
+        data = json.dumps(body).encode()
+    if signed:
+        h.update(nobitex_signed_headers(signed[0], signed[1], method, url, data or b""))
     req = urllib.request.Request(url, data=data, headers=h, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -186,6 +265,10 @@ def http(method, url, headers=None, body=None, timeout=30):
 
 
 def auth():
+    """Signed API key pair (NOBITEX_API_KEY + NOBITEX_API_SECRET) wins over a login token (NOBITEX_TOKEN)."""
+    key, secret = os.environ.get("NOBITEX_API_KEY"), os.environ.get("NOBITEX_API_SECRET")
+    if key and secret:
+        return {"_nobitex_signed": (key, secret)}
     tok = os.environ.get("NOBITEX_TOKEN")
     return {"Authorization": "Token " + tok} if tok else None
 
@@ -193,7 +276,7 @@ def auth():
 def need_auth():
     h = auth()
     if not h:
-        sys.exit("refused: $NOBITEX_TOKEN is not set. Set it in your own terminal, never paste keys in the chat.")
+        sys.exit("refused: $NOBITEX_API_KEY and $NOBITEX_API_SECRET (or $NOBITEX_TOKEN) are not set. Set them in your own terminal, never paste keys in the chat.")
     return h
 
 

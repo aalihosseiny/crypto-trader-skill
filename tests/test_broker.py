@@ -11,7 +11,7 @@ R = load("crypto-risk", "check.py")
 class Base(Case):
     def setUp(self):
         super().setUp()
-        for v in ("NOBITEX_TOKEN", "NOBITEX_TESTNET_TOKEN", "WALLEX_API_KEY"):
+        for v in ("NOBITEX_TOKEN", "NOBITEX_TESTNET_TOKEN", "WALLEX_API_KEY", "NOBITEX_API_KEY", "NOBITEX_API_SECRET"):
             os.environ.pop(v, None)
         self.calls = []
 

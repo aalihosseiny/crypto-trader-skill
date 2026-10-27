@@ -31,7 +31,8 @@ def open_order(side="short", coin="BTC", q="IRT", margin=500000, lev=2.0):
 class Base(Case):
     def setUp(self):
         super().setUp()
-        os.environ.pop("NOBITEX_TOKEN", None)
+        for v in ("NOBITEX_TOKEN", "NOBITEX_API_KEY", "NOBITEX_API_SECRET"):
+            os.environ.pop(v, None)
         self.calls = []
         self.write("prices.json", prices(market("BTC", 7000000000, bid=6995000000, ask=7005000000),
                                          market("BTC", 67000, bid=66990, ask=67010, quote="USDT"),
@@ -195,7 +196,8 @@ class TestLive(Base):
         M.http = fake
 
     def tearDown(self):
-        os.environ.pop("NOBITEX_TOKEN", None)
+        for v in ("NOBITEX_TOKEN", "NOBITEX_API_KEY", "NOBITEX_API_SECRET"):
+            os.environ.pop(v, None)
         super().tearDown()
 
     def test_no_token_refuses(self):
@@ -251,6 +253,38 @@ class TestLive(Base):
         out, code = self.run_main(M, ["transfer", "1000000", "--to", "margin", "--confirm", "1000000"])
         self.assertEqual(code, 0, out)
         self.assertEqual(self.calls[-1][2], {"currency": "rls", "amount": "10000000", "src": "spot", "dst": "margin"})
+
+
+class TestSignedAuth(Case):
+    SEED = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+
+    def test_ed25519_matches_rfc8032_vector(self):
+        self.assertEqual(M.ed25519_sign(self.SEED, b"").hex(),
+                         "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
+
+    def test_same_signature_as_broker(self):
+        import base64
+        K = load("crypto-broker", "broker.py")
+        secret = base64.urlsafe_b64encode(self.SEED).decode()
+        a = M.nobitex_signed_headers("pub", secret, "POST", "https://apiv2.nobitex.ir/wallets/transfer", b'{"a":1}')
+        b = K.nobitex_signed_headers("pub", secret, "POST", "https://apiv2.nobitex.ir/wallets/transfer", b'{"a":1}')
+        if a["Nobitex-Timestamp"] == b["Nobitex-Timestamp"]:
+            self.assertEqual(a, b)
+
+    def test_auth_prefers_key_pair_over_token(self):
+        names = ("NOBITEX_TOKEN", "NOBITEX_API_KEY", "NOBITEX_API_SECRET")
+        old = {v: os.environ.get(v) for v in names}
+        try:
+            for v in names:
+                os.environ.pop(v, None)
+            self.assertIsNone(M.auth())
+            os.environ["NOBITEX_TOKEN"] = "t"
+            self.assertEqual(M.auth(), {"Authorization": "Token t"})
+            os.environ.update(NOBITEX_API_KEY="pub", NOBITEX_API_SECRET="sec")
+            self.assertEqual(M.auth(), {"_nobitex_signed": ("pub", "sec")})
+        finally:
+            for v, x in old.items():
+                os.environ.pop(v, None) if x is None else os.environ.__setitem__(v, x)
 
 
 if __name__ == "__main__":
