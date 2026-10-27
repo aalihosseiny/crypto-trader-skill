@@ -15,6 +15,7 @@ Propose (writes crypto/margin_orders.json and runs the margin risk check; nothin
   python3 margin.py open long ETH --margin 20 --leverage 2 --quote USDT   # tether market
   python3 margin.py close P_ID                                            # close a whole position
   python3 margin.py protect P_ID --stop 7300000000                        # stop-loss order on a position
+  python3 margin.py oco P_ID --stop 7300000000 --take 6500000000         # stop-loss + take-profit, one cancels the other
 
 Execute (same chain as crypto-broker)
   python3 margin.py show
@@ -354,7 +355,7 @@ def paper():
 
 
 def paper_mark(pos, price, book=None, fee_rate=0.0025):
-    """Update a paper position with the current price: a stop-loss fires first, then liquidation."""
+    """Update a paper position with the current price: a stop-loss fires first, then a take-profit, then liquidation."""
     if pos["status"] != "Open" or price is None:
         return pos
     stop, liq = pos.get("stop"), pos.get("liq")
@@ -362,6 +363,14 @@ def paper_mark(pos, price, book=None, fee_rate=0.0025):
         move = (stop - pos["entry"]) if pos["side"] == "long" else (pos["entry"] - stop)
         fee = pos["qty"] * stop * fee_rate
         pos.update(status="Stopped", exit=stop, pnl=move * pos["qty"] - fee - pos.get("fees", 0), closed=now_utc().isoformat())
+        if book is not None:
+            book["wallet"][pos["quote"]] = book["wallet"].get(pos["quote"], 0.0) + pos["collateral"] + move * pos["qty"] - fee
+        return pos
+    take = pos.get("take")
+    if take and ((pos["side"] == "long" and price >= take) or (pos["side"] == "short" and price <= take)):
+        move = (take - pos["entry"]) if pos["side"] == "long" else (pos["entry"] - take)
+        fee = pos["qty"] * take * fee_rate
+        pos.update(status="Closed", exit=take, pnl=move * pos["qty"] - fee - pos.get("fees", 0), closed=now_utc().isoformat())
         if book is not None:
             book["wallet"][pos["quote"]] = book["wallet"].get(pos["quote"], 0.0) + pos["collateral"] + move * pos["qty"] - fee
         return pos
@@ -432,6 +441,14 @@ def check_order(o, cfg, mm, open_count, wallet):
             r.append("a short's stop must be above the price %s" % fmt(px, q))
         if liq and ((o["side"] == "long" and s <= liq) or (o["side"] == "short" and s >= liq)):
             r.append("stop %s is beyond the liquidation price %s: it would never fire first" % (fmt(s, q), fmt(liq, q)))
+    if o["kind"] == "oco":
+        s, tk, px, liq = o["stop_price"], o["take_price"], m["last"], o.get("liq")
+        if o["side"] == "long" and not (s < px < tk):
+            r.append("a long's stop must be below the price %s and its take-profit above it" % fmt(px, q))
+        if o["side"] == "short" and not (tk < px < s):
+            r.append("a short's take-profit must be below the price %s and its stop above it" % fmt(px, q))
+        if liq and ((o["side"] == "long" and s <= liq) or (o["side"] == "short" and s >= liq)):
+            r.append("stop %s is beyond the liquidation price %s: it would never fire first" % (fmt(s, q), fmt(liq, q)))
     if o["kind"] in ("open",) and placed_today() >= cfg["max_orders_per_day"]:
         r.append("daily limit of %d margin orders reached" % cfg["max_orders_per_day"])
     return r
@@ -473,6 +490,16 @@ def build_ticket(o, cfg):
         words = "CLOSE %s position %s: %s %s %s at %s %s %s" % (
             o["side"], o["position_id"], "BUY back" if buying else "SELL", o["amount"], coin,
             "at most" if buying else "at least", fmt(limit, q), unit(q))
+    elif o["kind"] == "oco":
+        stop, take = o["stop_price"], o["take_price"]
+        stop_limit = stop * (1 + 2 * slip) if buying else stop * (1 - 2 * slip)
+        payload = {"mode": "oco", "execution": "limit", "amount": o["amount"], "price": price_str(take, q),
+                   "stopPrice": price_str(stop, q), "stopLimitPrice": price_str(stop_limit, q)}
+        path = "/positions/%s/close" % o["position_id"]
+        words = ("OCO on %s position %s: take-profit LIMIT %s %s at %s %s, or if the price reaches %s %s a stop-LIMIT %s at %s %s "
+                 "(a limit, not market: in a fast gap past it the stop may not fill); one cancels the other; amount %s %s") % (
+            o["side"], o["position_id"], "buy back" if buying else "sell", o["amount"], fmt(take, q), unit(q),
+            fmt(stop, q), unit(q), "buy back" if buying else "sell", fmt(stop_limit, q), unit(q), o["amount"], coin)
     else:  # protect
         stop = o["stop_price"]
         worst = stop * (1 + 2 * slip) if buying else stop * (1 - 2 * slip)
@@ -560,6 +587,15 @@ def cmd_protect(args, cfg):
     p = find_position(args.position, cfg)
     add_order({"kind": "protect", "position_id": str(p["id"]), "side": p["side"], "coin": p["coin"], "quote": p["quote"],
                "amount": p["liability_str"], "stop_price": float(args.stop), "liq": p.get("liq"), "exchange": "nobitex"}, cfg)
+
+
+def cmd_oco(args, cfg):
+    p = find_position(args.position, cfg)
+    add_order({"kind": "oco", "position_id": str(p["id"]), "side": p["side"], "coin": p["coin"], "quote": p["quote"],
+               "amount": p["liability_str"], "stop_price": float(args.stop), "take_price": float(args.take),
+               "liq": p.get("liq"), "exchange": "nobitex"}, cfg)
+    print("   Nobitex refuses an OCO while other close orders already use the position's amount: cancel its existing "
+          "stop-loss first (cancel-order ID --confirm ID), then place this OCO right away.")
 
 
 def cmd_show(args, cfg):
@@ -658,6 +694,9 @@ def paper_execute(o, t, cfg):
             return None, "paper position %s is not open" % o["position_id"]
         pos["stop"] = o["stop_price"]
         msg = "paper: stop-loss on %s at %s" % (pos["id"], fmt(o["stop_price"], q))
+        if o["kind"] == "oco":
+            pos["take"] = o["take_price"]
+            msg = "paper: OCO on %s: stop %s, take-profit %s" % (pos["id"], fmt(o["stop_price"], q), fmt(o["take_price"], q))
     save_json(dpath("margin_paper.json"), book)
     return msg, None
 
@@ -700,9 +739,16 @@ def cmd_place(args, cfg):
     resp = http("POST", BASE + t["path"], h, t["payload"])
     if resp.get("status") != "ok":
         log_event({"action": "rejected", "key": okey(o), "order_id": o["id"], "mode": "live", "response": resp})
-        sys.exit("Nobitex refused: %s %s" % (resp.get("code", ""), resp.get("message", json.dumps(resp, ensure_ascii=False)[:300])))
-    od = resp.get("order") or {}
-    msg = "live: %s -> Nobitex order %s, status %s" % (t["words"], od.get("id"), od.get("status"))
+        hint = (" | an open close order (e.g. a stop-loss) already uses this position's amount: cancel it first "
+                "(cancel-order ID --confirm ID), then place again") if resp.get("code") == "ExceedLiability" else ""
+        sys.exit("Nobitex refused: %s %s%s" % (resp.get("code", ""), resp.get("message", json.dumps(resp, ensure_ascii=False)[:300]), hint))
+    if t["kind"] == "oco":   # an OCO answers with its two legs
+        legs = resp.get("orders") or []
+        msg = "live: %s -> Nobitex orders %s" % (t["words"], ", ".join(
+            "%s %s (%s)" % (x.get("id"), x.get("execution"), x.get("status")) for x in legs) or "(no legs returned: check the panel)")
+    else:
+        od = resp.get("order") or {}
+        msg = "live: %s -> Nobitex order %s, status %s" % (t["words"], od.get("id"), od.get("status"))
     log_event({"action": "placed", "key": okey(o), "order_id": o["id"], "mode": "live", "ticket": t, "response": resp,
                "summary": msg})
     print(msg)
@@ -841,6 +887,8 @@ def main(argv=None):
     s.add_argument("--margin", required=True); s.add_argument("--leverage", required=True); s.add_argument("--quote")
     s = sub.add_parser("close"); s.add_argument("position")
     s = sub.add_parser("protect"); s.add_argument("position"); s.add_argument("--stop", required=True)
+    s = sub.add_parser("oco"); s.add_argument("position"); s.add_argument("--stop", required=True)
+    s.add_argument("--take", required=True)
     sub.add_parser("show")
     s = sub.add_parser("approve"); s.add_argument("id"); s.add_argument("--words", required=True)
     s = sub.add_parser("place"); s.add_argument("id"); s.add_argument("--confirm", required=True)
@@ -848,7 +896,7 @@ def main(argv=None):
     args = p.parse_args(argv)
     cfg = load_config()
     fn = {"markets": cmd_markets, "wallet": cmd_wallet, "positions": cmd_positions, "transfer": cmd_transfer,
-          "open": cmd_open, "close": cmd_close, "protect": cmd_protect, "show": cmd_show, "approve": cmd_approve,
+          "open": cmd_open, "close": cmd_close, "protect": cmd_protect, "oco": cmd_oco, "show": cmd_show, "approve": cmd_approve,
           "place": cmd_place, "cancel-order": cmd_cancel}[args.cmd]
     try:
         fn(args, cfg)

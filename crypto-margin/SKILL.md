@@ -54,6 +54,14 @@ at 2x a 45% move against a long liquidates it, at 5x about 12%.
    (`margin.py protect P_ID --stop PRICE`, same ticket / yes / approve /
    place chain). A stop must sit between the price and the liquidation price.
 7. Closing: `margin.py close P_ID`, then the same chain.
+8. Take-profit: `margin.py oco P_ID --stop PRICE --take PRICE` (same ticket / yes /
+   approve / place chain) puts a stop-loss and a take-profit on a position, and
+   whichever fires cancels the other. Nobitex builds it as a LIMIT take-profit
+   plus a stop-LIMIT (the stop leg is not a market order: in a fast gap past its
+   limit it may not fill, so say so when showing the ticket). Nobitex rejects an
+   OCO while other close orders (such as an earlier `protect` stop) already use
+   the position's amount, so cancel that stop first (`cancel-order`) and place
+   the OCO straight after; the position is unprotected in between.
 
 ## Watching
 

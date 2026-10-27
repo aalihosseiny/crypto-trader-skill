@@ -287,5 +287,62 @@ class TestSignedAuth(Case):
                 os.environ.pop(v, None) if x is None else os.environ.__setitem__(v, x)
 
 
+class TestOco(Base):
+    def reasons(self, o):
+        return "; ".join(M.check_order(o, cfg(), MM, 0, 10 ** 9))
+
+    def oco(self, side, stop, take, liq=None):
+        return {"id": "m9", "kind": "oco", "side": side, "coin": "BTC", "quote": "IRT", "stop_price": stop, "take_price": take,
+                "liq": liq, "amount": "0.5", "position_id": "128"}
+
+    def test_long_needs_stop_below_and_take_above(self):
+        self.assertEqual(self.reasons(self.oco("long", 6.6e9, 7.4e9, liq=3.8e9)), "")
+        self.assertIn("must be below", self.reasons(self.oco("long", 7.2e9, 7.4e9)))      # stop above the 7.0B price
+        self.assertIn("must be below", self.reasons(self.oco("long", 6.6e9, 6.9e9)))      # take-profit below the price
+        self.assertIn("liquidation", self.reasons(self.oco("long", 6.6e9, 7.4e9, liq=6.7e9)))
+
+    def test_short_is_mirrored(self):
+        self.assertEqual(self.reasons(self.oco("short", 7.4e9, 6.6e9, liq=9.5e9)), "")
+        self.assertIn("take-profit must be below", self.reasons(self.oco("short", 6.6e9, 7.4e9)))
+
+    def test_live_payload_is_a_limit_plus_stop_limit_in_rial(self):
+        t, prob = M.build_ticket(self.oco("long", 6.6e9, 7.4e9), cfg())
+        self.assertIsNone(prob)
+        p = t["payload"]
+        self.assertEqual(t["path"], "/positions/128/close")
+        self.assertEqual((p["mode"], p["execution"], p["amount"]), ("oco", "limit", "0.5"))
+        self.assertEqual(p["price"], "74000000000")                                        # take-profit, toman x 10
+        self.assertEqual(p["stopPrice"], "66000000000")
+        self.assertEqual(p["stopLimitPrice"], "65340000000")                               # 1% under the stop (2 x slippage)
+        self.assertIn("limit, not market", t["words"])
+
+    def test_short_oco_stop_limit_sits_above_the_stop(self):
+        t, _ = M.build_ticket(self.oco("short", 7.4e9, 6.6e9), cfg())
+        self.assertEqual(t["payload"]["stopLimitPrice"], "74740000000")
+
+    def test_paper_take_profit_and_stop(self):
+        self.write("config.json", {"allow_leverage": True})
+        self.write("portfolio.json", {"quote": "IRT", "cash": 2000000, "holdings": {}})
+        self.run_main(M, ["transfer", "1500000", "--to", "margin", "--confirm", "1500000"])
+        for _ in range(2):
+            self.run_main(M, ["open", "short", "BTC", "--margin", "500000", "--leverage", "2"])
+        for i in ("m1", "m2"):
+            self.run_main(M, ["approve", i, "--words", "yes"])
+            self.run_main(M, ["place", i, "--confirm", i])
+        for pid, j in (("p1", "m3"), ("p2", "m4")):
+            out, code = self.run_main(M, ["oco", pid, "--stop", "7400000000", "--take", "6600000000"])
+            self.assertIn("PASS", out, out)
+            self.run_main(M, ["approve", j, "--words", "yes"])
+            out, code = self.run_main(M, ["place", j, "--confirm", j])
+            self.assertEqual(code, 0, out)
+        pr = self.read("prices.json")
+        pr["markets"]["BTCIRT"].update(last=6500000000, bid=6499000000, ask=6501000000)    # down through the short's take-profit
+        self.write("prices.json", pr)
+        self.run_main(M, ["positions", "--all"])
+        ps = {p["id"]: p for p in self.read("margin_paper.json")["positions"]}
+        self.assertEqual((ps["p1"]["status"], ps["p1"]["exit"]), ("Closed", 6600000000))
+        self.assertGreater(ps["p1"]["pnl"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
