@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "crypto-trader-skill",
-      "description": "Ten Claude skills for crypto on Nobitex and Wallex: whale copy, news and sentiment, technical analysis, alerts, budget, risk, broker, leveraged margin, rebalancing and P&L.",
+      "description": "Eleven Claude skills for crypto on Nobitex and Wallex: whale copy, news and sentiment, technical analysis, alerts, budget, risk, broker, leveraged margin with OCO, a daily routine, rebalancing and P&L.",
       "source": "./",
       "category": "productivity"
     }
