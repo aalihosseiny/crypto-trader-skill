@@ -45,6 +45,10 @@ DEFAULTS = {
     "allow_leverage": False,
     "approval_ttl_min": 10,
     "qty_decimals": {},
+    "max_leverage": 2,
+    "max_margin": {"IRT": 1000000, "USDT": 50},
+    "max_open_positions": 3,
+    "min_liq_distance_pct": 15,
 }
 HASH_FIELDS = ("id", "coin", "side", "quote", "exchange", "notional", "qty", "limit_price", "type", "leverage")
 

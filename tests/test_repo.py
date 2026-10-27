@@ -10,7 +10,7 @@ import unittest
 from _load import ROOT, Case, load, market, prices
 
 SKILLS = ["crypto-whales", "crypto-news", "crypto-ta", "crypto-alerts", "crypto-budget",
-          "crypto-risk", "crypto-broker", "crypto-rebalance", "crypto-pnl"]
+          "crypto-risk", "crypto-broker", "crypto-rebalance", "crypto-pnl", "crypto-margin"]
 STDLIB_OK = {"argparse", "datetime", "json", "os", "sys", "time", "urllib", "math", "hashlib", "re", "html",
              "email", "xml", "tempfile"}
 
@@ -43,7 +43,8 @@ class TestRepo(unittest.TestCase):
     def test_shared_defaults_agree(self):
         example = json.load(open(os.path.join(ROOT, "crypto-budget", "config.example.json")))
         for skill, script in (("crypto-budget", "size.py"), ("crypto-risk", "check.py"),
-                              ("crypto-broker", "broker.py"), ("crypto-rebalance", "rebalance.py")):
+                              ("crypto-broker", "broker.py"), ("crypto-rebalance", "rebalance.py"),
+                              ("crypto-margin", "margin.py")):
             self.assertEqual(load(skill, script).DEFAULTS, example, skill)
 
     def test_paper_is_the_default(self):

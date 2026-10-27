@@ -36,7 +36,7 @@ including when the user is in a hurry.
 ## Notes
 
 - `python3 crypto-risk/check.py limits` prints the limits in force.
-- Leverage, margin and futures stay blocked unless the user sets
-  `allow_leverage: true` themselves. Warn clearly before they do: leveraged
-  crypto positions can be liquidated to zero.
+- This skill checks spot orders. Leveraged positions go through
+  **crypto-margin**, which has its own checks (max leverage, max margin, open
+  positions, distance to liquidation) and needs `allow_leverage: true`.
 - Reply in the user's language.

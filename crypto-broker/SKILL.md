@@ -61,6 +61,8 @@ never places an order the user did not answer about after seeing its ticket.
 - Nobitex accepts API calls only from Iranian IPs; a cloud session cannot
   reach it. Live and testnet trading run on the user's own computer.
 
+Leverage (long / short on margin) is not this skill: use **crypto-margin**.
+
 ## After placing
 
 - `broker.py status o1` shows the exchange's view (filled, partly filled,
