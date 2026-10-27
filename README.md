@@ -14,7 +14,7 @@
 **روش ۱: پلاگین Claude Code**
 
 ```
-/plugin marketplace add YOUR-USERNAME/crypto-trader-skill
+/plugin marketplace add aalihosseiny/crypto-trader-skill
 /plugin install crypto-trader-skill@crypto-trader-skill
 ```
 
@@ -23,7 +23,7 @@
 **روش ۲: کپی پوشه‌ها** (دستورهای کوتاه مثل `/crypto-whales`)
 
 ```
-git clone https://github.com/YOUR-USERNAME/crypto-trader-skill.git
+git clone https://github.com/aalihosseiny/crypto-trader-skill.git
 cp -r crypto-trader-skill/crypto-* ~/.claude/skills/
 ```
 
