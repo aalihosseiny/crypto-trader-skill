@@ -24,6 +24,14 @@ have happened?" Trades closed in profit X% of the time (with a range), the
 average trade made Y R (1R = the planned loss of a trade), the worst run of
 losses was Z R. Those odds then appear in the daily table.
 
+## Automatic use
+
+crypto-daily runs `backtest.py ensure --auto-adopt` as its first step every
+day: nothing happens while the backtest is under 30 days old; otherwise it
+fetches, runs the walk-forward, adopts or withdraws settings only by the
+recommendation, and prints a VERDICT line. The steps below are for running it
+by hand or explaining it in depth.
+
 ## Steps
 
 1. Markets: `python3 crypto-margin/margin.py markets` (needs the Iranian IP,

@@ -262,6 +262,63 @@ class TestCommands(Base):
         self.assertFalse(self.exists("backtest_stats.json"))
 
 
+class TestEnsure(Base):
+    def test_fresh_backtest_is_left_alone(self):
+        calls = []
+        old = BT.cmd_fetch
+        BT.cmd_fetch = lambda a: calls.append("fetch")
+        try:
+            self.run_main(BT, ["run"])
+            out, code = self.run_main(BT, ["ensure", "--auto-adopt"])
+        finally:
+            BT.cmd_fetch = old
+        self.assertEqual(code, 0, out)
+        self.assertIn("backtest fresh", out)
+        self.assertIn("VERDICT", out)
+        self.assertEqual(calls, [])
+
+    def test_missing_backtest_is_built_then_verdict(self):
+        calls = []
+        old = BT.cmd_fetch
+        BT.cmd_fetch = lambda a: calls.append("fetch")                     # history is already on disk
+        try:
+            out, code = self.run_main(BT, ["ensure", "--auto-adopt", "--train-days", "200", "--test-days", "60",
+                                           "--min-trades", "5"])
+        finally:
+            BT.cmd_fetch = old
+        self.assertEqual(code, 0, out)
+        self.assertEqual(calls, ["fetch"])
+        self.assertIn("updating", out)
+        self.assertTrue(self.exists("backtest_stats.json"))
+        self.assertIn("VERDICT", out)
+
+    def test_old_backtest_is_refreshed_and_retired_settings_removed(self):
+        self.write("backtest_stats.json", {"created": "2026-01-01T00:00:00+00:00", "overall": {}})
+        self.write("strategy.json", {"adopted": "2026-01-01", "params": {"min_score": 50, "min_rr": 2.2}})
+        old_f, old_w = BT.cmd_fetch, BT.cmd_walkforward
+        BT.cmd_fetch = lambda a: None
+
+        def wf(a):
+            BT.save_json(BT.dpath("backtest_stats.json"), {"created": "2026-10-28T00:00:00+00:00",
+                                                           "overall": {"n": 50, "enough": True, "exp_r": -0.1,
+                                                                       "exp_r_lo": -0.3, "exp_r_hi": 0.1}})
+            BT.save_json(BT.dpath("strategy_candidate.json"), {"created": "2026-10-28",
+                                                               "recommendation": {"adopt": False, "why": "x"}})
+        BT.cmd_walkforward = wf
+        try:
+            out, code = self.run_main(BT, ["ensure", "--auto-adopt"])
+        finally:
+            BT.cmd_fetch, BT.cmd_walkforward = old_f, old_w
+        self.assertFalse(self.exists("strategy.json"))
+        self.assertTrue(self.exists("strategy.retired.json"))
+        self.assertIn("NEGATIVE HISTORY", out)
+
+    def test_verdict_lines(self):
+        self.assertIn("EDGE", BT.verdict({"overall": {"n": 60, "enough": True, "exp_r": 0.3, "exp_r_lo": 0.05, "exp_r_hi": 0.5}}))
+        self.assertIn("NO PROVEN EDGE", BT.verdict({"overall": {"n": 60, "enough": True, "exp_r": 0.1, "exp_r_lo": -0.1, "exp_r_hi": 0.3}}))
+        self.assertIn("TOO FEW", BT.verdict({"overall": {"n": 8, "enough": False}}))
+
+
 class TestCache(Base):
     def test_signals_are_cached_and_invalidated_by_new_data(self):
         BT.build_universe()

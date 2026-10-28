@@ -26,13 +26,32 @@ Uses: crypto-margin (markets, wallet, positions, open, oco, approve, place,
 cancel-order), crypto-alerts (prices), crypto-ta (through daily.py),
 crypto-news (headlines, sentiment, unlocks), crypto-backtest (the odds).
 
-## Backtest first
+## Step 0: the backtest, automatically (every run, no question asked)
 
-If `crypto/backtest_stats.json` does not exist or is older than 30 days, say
-so at the top and offer to run crypto-backtest (fetch + walkforward) before
-trading. If the last backtest says the rules have no proven edge (the range
-of the average R reaches below zero), repeat that in one line above the table
-every day, so the user decides with it in view.
+The user gives one command and expects everything checked. So every run starts
+with:
+
+1. `python3 crypto-margin/margin.py markets` (fresh list of margin markets)
+2. `python3 crypto-backtest/backtest.py ensure --auto-adopt`
+
+`ensure` does nothing when the backtest is under 30 days old. When it is
+missing or older, it downloads three years of daily and 4h history, runs the
+walk-forward test, applies new settings ONLY if the walk-forward recommends
+them (out-of-sample better than the defaults, grid neighbours agree), and
+withdraws earlier adopted settings that no longer earn their place. The first
+run can take several minutes: tell the user in one short line ("running the
+backtest first, a few minutes") and carry on; do not ask.
+
+It ends with a VERDICT line. Put it, in the user's words, above the table:
+- EDGE: the rules made money out of sample, with the range above zero.
+- NO PROVEN EDGE: positive on average but the range reaches below zero.
+- NEGATIVE HISTORY: the rules lost money in the past. Still show the table
+  if anything passes, but say plainly that history argues against trading
+  these rules with real money, and suggest the smallest size or a pause.
+- TOO FEW / NO TRADES: not enough history to judge.
+If `ensure` changed the settings (adopted or withdrawn), say so in one line.
+If `ensure` fails (no Iranian IP, Nobitex down), say the odds are missing
+today and continue with the table without the chance column.
 
 ## Defaults (the user can change them in words)
 
@@ -57,8 +76,8 @@ asks for more, they change the config first (see crypto-margin).
 
 ## Step 2: the plan
 
-1. Fresh data: `python3 crypto-margin/margin.py markets`, then prices for the
-   markets it lists (`python3 crypto-alerts/alerts.py prices --all` and
+1. Fresh prices for the margin markets (the market list was refreshed in
+   Step 0) (`python3 crypto-alerts/alerts.py prices --all` and
    `--all --quote USDT`).
 2. `python3 crypto-daily/daily.py plan --margin 300000 --leverage 2 --max-new 2 --exclude <coins already open>`
    (`--quote IRT` if the user only has toman in the margin wallet; longs are

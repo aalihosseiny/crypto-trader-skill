@@ -6,6 +6,7 @@
   python3 backtest.py walkforward                       # out-of-sample test of a small parameter grid
   python3 backtest.py adopt                             # use the walk-forward choice in crypto-daily (only if it earned it)
   python3 backtest.py report                            # the last report again
+  python3 backtest.py ensure --auto-adopt               # crypto-daily's first step: refresh only if missing / older than 30 days
   python3 backtest.py odds long BTCIRT 65               # historical odds of one setup (side, market, daily score)
 
 Same rules as crypto-daily, imported from crypto-daily/daily.py (direction, stop,
@@ -585,6 +586,60 @@ def cmd_adopt(args):
     print("crypto-daily now uses %s" % json.dumps(params))
 
 
+def verdict(stats):
+    """One plain line on whether the rules showed an edge, from a stats doc."""
+    o = (stats or {}).get("overall") or {}
+    if not o.get("n"):
+        return "NO TRADES in the backtest: the rules never fired on this history"
+    if not o.get("enough"):
+        return "TOO FEW backtest trades (%d) to judge the rules" % o["n"]
+    if o["exp_r_lo"] > 0:
+        return "EDGE: average %+.2fR per trade, 90%% range %+.2f to %+.2f (n=%d)" % (o["exp_r"], o["exp_r_lo"], o["exp_r_hi"], o["n"])
+    if o["exp_r"] > 0:
+        return "NO PROVEN EDGE: average %+.2fR but the 90%% range reaches %+.2f (n=%d)" % (o["exp_r"], o["exp_r_lo"], o["n"])
+    return "NEGATIVE HISTORY: average %+.2fR per trade (n=%d); trading these rules lost money in the past" % (o["exp_r"], o["n"])
+
+
+def stats_age_days(stats, now=None):
+    t = None
+    try:
+        t = dt.datetime.fromisoformat((stats or {}).get("created"))
+    except (TypeError, ValueError):
+        return None
+    now = now or dt.datetime.now(dt.timezone.utc)
+    return (now - t).total_seconds() / DAY
+
+
+def cmd_ensure(args):
+    """Make sure crypto-daily has fresh, honest odds: refresh the backtest when missing or old."""
+    st = load_json(dpath("backtest_stats.json"))
+    age = stats_age_days(st)
+    if st and age is not None and age <= args.max_age:
+        print("backtest fresh: %.0f days old (%s)" % (age, st.get("source")))
+        print("VERDICT: " + verdict(st))
+        return
+    print("backtest %s: updating (history %d days, walk-forward); this can take a few minutes" % (
+        "missing" if not st else "%.0f days old" % age, args.days))
+    cmd_fetch(args)
+    try:
+        cmd_walkforward(args)
+    except (RuntimeError, SystemExit) as e:
+        print("walk-forward not possible (%s); falling back to a plain run of the default rules" % e)
+        for k in ("min_score", "min_rr"):
+            setattr(args, k, None)
+        if os.path.exists(dpath("strategy.json")):
+            os.replace(dpath("strategy.json"), dpath("strategy.retired.json"))
+        cmd_run(args)
+    cand = load_json(dpath("strategy_candidate.json")) or {}
+    rec = cand.get("recommendation") or {}
+    if args.auto_adopt and rec.get("adopt"):
+        cmd_adopt(argparse.Namespace(force=False))
+    elif rec and not rec.get("adopt") and os.path.exists(dpath("strategy.json")):
+        os.replace(dpath("strategy.json"), dpath("strategy.retired.json"))
+        print("earlier adopted settings no longer earn their place: back to the defaults")
+    print("VERDICT: " + verdict(load_json(dpath("backtest_stats.json"))))
+
+
 def cmd_report(args):
     r = load_json(dpath("backtest_report.json"))
     if not r:
@@ -632,6 +687,15 @@ def main(argv=None):
             s.add_argument("--train-days", type=int, default=365); s.add_argument("--test-days", type=int, default=90)
             s.add_argument("--min-trades", type=int, default=20)
     s = sub.add_parser("adopt"); s.add_argument("--force", action="store_true"); s.set_defaults(fn=cmd_adopt)
+    s = sub.add_parser("ensure"); s.set_defaults(fn=cmd_ensure)
+    s.add_argument("--max-age", type=float, default=30, help="days before the backtest is refreshed")
+    s.add_argument("--auto-adopt", action="store_true", help="apply walk-forward settings when they are recommended")
+    s.add_argument("--days", type=int, default=1095); s.add_argument("--coins", nargs="*")
+    s.add_argument("--quote", choices=["IRT", "USDT", "irt", "usdt"])
+    s.add_argument("--train-days", type=int, default=365); s.add_argument("--test-days", type=int, default=90)
+    s.add_argument("--min-trades", type=int, default=20)
+    for k in ("margin", "margin_usdt", "leverage", "max_new", "max_open"):
+        s.set_defaults(**{k: None})
     s = sub.add_parser("report"); s.set_defaults(fn=cmd_report)
     s = sub.add_parser("odds"); s.add_argument("side", choices=["long", "short"]); s.add_argument("market")
     s.add_argument("score", type=int); s.add_argument("--rr", type=float, default=1.8); s.set_defaults(fn=cmd_odds)
