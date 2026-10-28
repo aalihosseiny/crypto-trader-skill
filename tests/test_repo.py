@@ -10,9 +10,9 @@ import unittest
 from _load import ROOT, Case, load, market, prices
 
 SKILLS = ["crypto-whales", "crypto-news", "crypto-ta", "crypto-alerts", "crypto-budget",
-          "crypto-risk", "crypto-broker", "crypto-rebalance", "crypto-pnl", "crypto-margin", "crypto-daily"]
+          "crypto-risk", "crypto-broker", "crypto-rebalance", "crypto-pnl", "crypto-margin", "crypto-daily", "crypto-backtest"]
 STDLIB_OK = {"argparse", "datetime", "json", "os", "sys", "time", "urllib", "math", "hashlib", "re", "html",
-             "email", "xml", "tempfile", "base64", "importlib"}
+             "email", "xml", "tempfile", "base64", "importlib", "bisect", "csv", "random"}
 
 
 class TestRepo(unittest.TestCase):

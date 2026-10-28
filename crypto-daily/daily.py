@@ -85,6 +85,52 @@ def est_liq(side, entry, lev):
     return entry * (1 + 1.0 / lev) / LIQ_RATIO
 
 
+def direction(score_1d, score_4h, info, min_score):
+    """The entry rule, shared with crypto-backtest: daily and 4h agree, daily is strong, the side is enabled."""
+    if score_1d >= min_score and score_4h > 0 and info.get("long"):
+        return "long"
+    if score_1d <= -min_score and score_4h < 0 and info.get("short"):
+        return "short"
+    return None
+
+
+def score_bucket(score):
+    a = abs(score)
+    return "80+" if a >= 80 else "60-79" if a >= 60 else "40-59" if a >= 40 else "<40"
+
+
+def chance_for(row, stats):
+    """Historical odds for a planned row, from crypto/backtest_stats.json (crypto-backtest)."""
+    if not stats:
+        return None
+    key = "%s|%s" % (row["side"], score_bucket(row["score_1d"]))
+    b = (stats.get("buckets") or {}).get(key)
+    src = "setup %s" % key
+    if not b or b.get("n", 0) < stats.get("min_n", 30):
+        b = (stats.get("by_side") or {}).get(row["side"])
+        src = "all %ss" % row["side"]
+    if not b or not b.get("n"):
+        return None
+    coin = (stats.get("by_coin") or {}).get("%s%s|%s" % (row["coin"], row["quote"], row["side"]))
+    out = {"win_rate": b["win_rate"], "ci_lo": b["ci_lo"], "ci_hi": b["ci_hi"], "n": b["n"], "exp_r": b["exp_r"],
+           "exp_r_lo": b.get("exp_r_lo"), "basis": src, "source": stats.get("source"),
+           "breakeven": 1.0 / (1.0 + row["net_rr"]), "too_few": b["n"] < stats.get("min_n", 30)}
+    if coin and coin.get("n", 0) >= 10:
+        out["coin"] = {"n": coin["n"], "win_rate": coin["win_rate"], "exp_r": coin["exp_r"]}
+    return out
+
+
+def margin_for(q, args):
+    """--margin is toman; tether markets use --margin-usdt, or the same money converted at the USDT rate."""
+    if q == "IRT":
+        return args.margin
+    mu = getattr(args, "margin_usdt", None)
+    if mu:
+        return mu
+    rate = (load_json(dpath("prices.json"), {}) or {}).get("usdt_irt") or 100000
+    return round(args.margin / rate, 2)
+
+
 def build(coin, q, side, entry, d, args, fee_pct, daily_fee):
     """One candidate from the daily analysis `d`. Returns (row, None) or (None, reason)."""
     atr = d.get("atr")
@@ -111,7 +157,8 @@ def build(coin, q, side, entry, d, args, fee_pct, daily_fee):
         reward = entry - target
     if risk <= 0 or reward <= 0:
         return None, "no room for a stop and a target"
-    notional = args.margin * args.leverage
+    margin = margin_for(q, args)
+    notional = margin * args.leverage
     qty = notional / entry
     days = reward / atr
     fees = notional * 2 * fee_pct / 100.0 + notional * (daily_fee or 0) * max(1.0, days)
@@ -127,11 +174,12 @@ def build(coin, q, side, entry, d, args, fee_pct, daily_fee):
         gap = ((stop - liq) if side == "long" else (liq - stop)) / entry * 100
         if gap < args.min_liq_gap:
             return None, "liquidation %s is only %.1f%% beyond the stop" % (fmt(liq, q), gap)
-    if args.margin * args.leverage < (300000 if q == "IRT" else 11):
-        return None, "position under the exchange minimum"
+    if notional < (300000 if q == "IRT" else 11):
+        return None, "position %s %s is under the exchange minimum (%s)" % (
+            fmt(notional, q), "toman" if q == "IRT" else "USDT", "300,000 toman" if q == "IRT" else "11 USDT")
     row = {"coin": coin, "quote": q, "side": side, "entry": entry, "stop": stop, "take": target,
            "risk_pct": risk / entry * 100, "reward_pct": reward / entry * 100, "net_rr": net_rr, "days": days,
-           "liq": liq, "margin": args.margin, "leverage": args.leverage, "qty": qty,
+           "liq": liq, "margin": margin, "leverage": args.leverage, "qty": qty,
            "max_loss": max_loss, "profit": profit, "fees": fees,
            "score_1d": d["score"], "stop_basis": "level" if level else "1.5 ATR",
            "rank": net_rr / max(days, 0.5)}
@@ -169,11 +217,7 @@ def plan(args, ta=None, now=None):
             continue
         if args.pause:
             time.sleep(args.pause)
-        side = None
-        if d["score"] >= args.min_score and h["score"] > 0 and info.get("long"):
-            side = "long"
-        elif d["score"] <= -args.min_score and h["score"] < 0 and info.get("short"):
-            side = "short"
+        side = direction(d["score"], h["score"], info, args.min_score)
         if not side:
             skipped.append((key, "no clear direction (1d %+d, 4h %+d)" % (d["score"], h["score"])))
             continue
@@ -186,30 +230,56 @@ def plan(args, ta=None, now=None):
         row["score_4h"] = h["score"]
         row["why"] = "; ".join(r.split(" ", 1)[1] for r in d["reasons"][:2])
         rows.append(row)
+    stats = load_json(dpath("backtest_stats.json"))
+    for r in rows:
+        r["chance"] = chance_for(r, stats)
     rows.sort(key=lambda r: -r["rank"])
     picked = rows[: args.max_new]
     doc = {"created": (now or dt.datetime.now(dt.timezone.utc)).replace(microsecond=0).isoformat(),
            "settings": {"margin": args.margin, "leverage": args.leverage, "min_rr": args.min_rr,
-                        "min_score": args.min_score, "min_liq_gap": args.min_liq_gap},
+                        "min_score": args.min_score, "min_liq_gap": args.min_liq_gap,
+                        "strategy_source": getattr(args, "strategy_source", "defaults")},
+           "backtest": (stats or {}).get("source"),
            "picked": picked, "others": rows[args.max_new:], "skipped": skipped}
     save_json(dpath("daily_plan.json"), doc)
     return doc
+
+
+STRATEGY_DEFAULTS = {"min_score": 40, "min_rr": 1.8}
+
+
+def apply_strategy(args):
+    """Rule parameters: the command line wins, then crypto/strategy.json (adopted after a
+    walk-forward backtest), then the built-in defaults."""
+    st = load_json(dpath("strategy.json"), {}) or {}
+    used = []
+    for k, v in STRATEGY_DEFAULTS.items():
+        if getattr(args, k, None) is None:
+            if k in (st.get("params") or {}):
+                setattr(args, k, st["params"][k])
+                used.append(k)
+            else:
+                setattr(args, k, v)
+    args.strategy_source = ("strategy.json (%s)" % st.get("adopted", "")) if used else "defaults"
+    return args
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description="Once-a-day margin plan with stop-loss and take-profit")
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("plan")
-    s.add_argument("--margin", type=float, default=300000)
+    s.add_argument("--margin", type=float, default=300000, help="toman per trade on toman markets")
+    s.add_argument("--margin-usdt", type=float, default=None, help="USDT per trade on tether markets (default: --margin converted)")
     s.add_argument("--leverage", type=float, default=2)
     s.add_argument("--max-new", type=int, default=2)
-    s.add_argument("--min-rr", type=float, default=1.8)
-    s.add_argument("--min-score", type=int, default=40)
+    s.add_argument("--min-rr", type=float, default=None)
+    s.add_argument("--min-score", type=int, default=None)
     s.add_argument("--min-liq-gap", type=float, default=10)
     s.add_argument("--quote", choices=["IRT", "USDT", "irt", "usdt"])
     s.add_argument("--exclude", nargs="*")
     s.add_argument("--pause", type=float, default=0.4)
     args = p.parse_args(argv)
+    apply_strategy(args)
     doc = plan(args)
     if not doc["picked"]:
         print("NO TRADE TODAY: nothing passed every rule")
@@ -221,8 +291,19 @@ def main(argv=None):
         print("   margin %s, max loss %s, profit at target %s (fees %s)  | 1d %+d, 4h %+d | %s" % (
             fmt(r["margin"], q), fmt(r["max_loss"], q), fmt(r["profit"], q), fmt(r["fees"], q),
             r["score_1d"], r["score_4h"], r["why"]))
+        c = r.get("chance")
+        if c and c.get("too_few"):
+            print("   backtest: only %d similar trades in history: too few for reliable odds" % c["n"])
+        elif c:
+            print("   backtest: closed in profit %.0f%% of the time (90%% range %.0f-%.0f%%, n=%d, %s); "
+                  "needs %.0f%% to break even; average %+.2fR" % (
+                      c["win_rate"] * 100, c["ci_lo"] * 100, c["ci_hi"] * 100, c["n"], c["basis"],
+                      c["breakeven"] * 100, c["exp_r"]))
+        else:
+            print("   backtest: none yet (run crypto-backtest)")
     if doc["others"]:
         print("also passed, ranked lower: " + ", ".join("%s %s" % (r["coin"], r["side"]) for r in doc["others"]))
+    print("rules: min score %s, min R:R %s (%s)" % (args.min_score, args.min_rr, args.strategy_source))
     print("skipped %d markets; details in %s" % (len(doc["skipped"]), dpath("daily_plan.json")))
 
 

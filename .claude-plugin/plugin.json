@@ -1,7 +1,7 @@
 {
   "name": "crypto-trader-skill",
-  "description": "11 Claude skills for crypto on Nobitex and Wallex: copy whale wallets, news and market mood, technical analysis, price alerts, budget sizing, risk checks, spot orders, leveraged margin with OCO, and a once-a-day trading routine. Nothing goes out without your yes.",
-  "version": "1.2.0",
+  "description": "12 Claude skills for crypto on Nobitex and Wallex: copy whale wallets, news and market mood, technical analysis, price alerts, budget sizing, risk checks, spot orders, leveraged margin with OCO, a once-a-day trading routine and an honest walk-forward backtest. Nothing goes out without your yes.",
+  "version": "1.3.0",
   "license": "MIT",
   "keywords": [
     "claude-skills",
@@ -11,7 +11,8 @@
     "whales",
     "technical-analysis",
     "portfolio",
-    "margin"
+    "margin",
+    "backtest"
   ],
   "skills": "./"
 }

@@ -24,7 +24,15 @@ a conversation, not every day.
 
 Uses: crypto-margin (markets, wallet, positions, open, oco, approve, place,
 cancel-order), crypto-alerts (prices), crypto-ta (through daily.py),
-crypto-news (headlines, sentiment, unlocks).
+crypto-news (headlines, sentiment, unlocks), crypto-backtest (the odds).
+
+## Backtest first
+
+If `crypto/backtest_stats.json` does not exist or is older than 30 days, say
+so at the top and offer to run crypto-backtest (fetch + walkforward) before
+trading. If the last backtest says the rules have no proven edge (the range
+of the average R reaches below zero), repeat that in one line above the table
+every day, so the user decides with it in view.
 
 ## Defaults (the user can change them in words)
 
@@ -54,7 +62,11 @@ asks for more, they change the config first (see crypto-margin).
    `--all --quote USDT`).
 2. `python3 crypto-daily/daily.py plan --margin 300000 --leverage 2 --max-new 2 --exclude <coins already open>`
    (`--quote IRT` if the user only has toman in the margin wallet; longs are
-   usually on USDT markets).
+   usually on USDT markets). `--margin` is toman; tether markets use
+   `--margin-usdt` (default: the same money at the USDT rate). Nobitex needs at
+   least 11 USDT of position, so small toman budgets cannot trade USDT markets:
+   say so when those rows are skipped. Settings come from
+   `crypto/strategy.json` if a walk-forward result was adopted.
 3. Filter the picks with the news desk:
    `python3 crypto-news/news.py headlines --coins <picked coins> --hours 24 --peek`,
    `news.py sentiment --coins <picked>`, `news.py unlocks --days 7`.
@@ -70,7 +82,14 @@ asks for more, they change the config first (see crypto-margin).
 
 Write the table in the user's language, one row per trade, in rank order:
 
-| # | coin | long/short | entry | stop-loss | take-profit | R:R | ~days | liquidation | max loss (toman) | profit at target (toman) | why (one line) |
+| # | coin | long/short | entry | stop-loss | take-profit | R:R | ~days | liquidation | max loss (toman) | profit at target (toman) | chance (backtest) | why (one line) |
+
+"chance (backtest)" = how often similar past trades closed in profit, with
+its 90% range and the number of trades, next to the break-even rate for that
+R:R, e.g. "44% (37-51%, n=140), needs 36%". Write "too few" when daily.py says
+so, and "no backtest" when there is none. Never present it as a promise.
+Drop or flag a row whose setup has 30+ past trades and an average result
+below zero.
 
 Under it, one line: the total margin used and the total worst-case loss. If
 nothing passed: "no trade today" and the main reason (e.g. no clear trend,

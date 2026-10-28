@@ -9,7 +9,7 @@ T = load("crypto-ta", "ta.py")
 
 
 def args(**kw):
-    a = dict(margin=300000, leverage=2.0, max_new=2, min_rr=1.8, min_score=40, min_liq_gap=10, quote=None,
+    a = dict(margin=300000, margin_usdt=None, leverage=2.0, max_new=2, min_rr=1.8, min_score=40, min_liq_gap=10, quote=None,
              exclude=None, pause=0)
     a.update(kw)
     return argparse.Namespace(**a)
@@ -72,9 +72,24 @@ class TestBuild(Case):
         self.assertTrue("fees" in why or "after fees" in why)
 
     def test_liquidation_too_close_at_high_leverage(self):
-        row, why = D.build("BTC", "USDT", "long", 100.0, self.d(atr=8), args(margin=50, leverage=5), 0.1, 0.0)
+        row, why = D.build("BTC", "USDT", "long", 100.0, self.d(atr=8), args(margin_usdt=50, leverage=5), 0.1, 0.0)
         self.assertIsNone(row)
         self.assertIn("liquidation", why)
+
+
+class TestMarginUnits(Case):
+    def test_usdt_margin_is_converted_not_reused(self):
+        self.write("prices.json", prices(usdt_irt=100000))
+        self.assertEqual(D.margin_for("IRT", args()), 300000)
+        self.assertEqual(D.margin_for("USDT", args()), 3.0)           # 300,000 toman / 100,000
+        self.assertEqual(D.margin_for("USDT", args(margin_usdt=20)), 20)
+
+    def test_small_usdt_position_is_refused_with_the_reason(self):
+        d = {"atr": 5.0, "support": None, "resistance": None, "score": 60, "price": 100.0, "reasons": []}
+        self.write("prices.json", prices(usdt_irt=100000))
+        row, why = D.build("BTC", "USDT", "long", 100.0, d, args(), 0.1, 0.0)
+        self.assertIsNone(row)
+        self.assertIn("11 USDT", why)
 
 
 class TestPlan(Case):
